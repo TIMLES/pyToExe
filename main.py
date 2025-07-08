@@ -6,7 +6,8 @@ import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 import findPythonExe
 from PIL import Image, ImageTk  # 需安装pillow库: pip install pillow
-
+import tkinter as tk
+from tkinter.scrolledtext import ScrolledText
 import pyToEXE as pyE
 
 
@@ -374,15 +375,9 @@ class PackApp:
 
 
     # Treeview 日志，不显示标题
-        self.log_tree = tb.Treeview(fr, columns=("log",), show="", bootstyle="info")
-        self.log_tree.column("log", anchor="w")
-        self.log_tree.grid(row=0, column=0, columnspan=4, sticky="nsew", pady=(0, 10), padx=8)
-    # 滚动条也一样
-        # self.log_scroll = tb.Scrollbar(fr, command=self.log_tree.yview)
-        # self.log_tree.config(yscrollcommand=self.log_scroll.set)
-        # self.log_scroll.grid(row=0, column=3, sticky="ns", pady=(0, 20))
-
-        self.log_tree.grid_remove()   # ← 一创建即隐藏
+        self.log_text = ScrolledText(fr, wrap="word", height=15)
+        self.log_text.grid(row=0, column=0, columnspan=4, sticky="nsew", pady=(0, 10), padx=8)
+        self.log_text.grid_remove()   # ← 一创建即隐藏
 
 
         self.dist_path = os.path.join(os.getcwd(), "dist")
@@ -437,22 +432,6 @@ class PackApp:
         )
         return aaaa
 
-
-    def prepare_pyinstaller_and_callback(self):
-        # 后台线程：检查PyInstaller包
-        try:#区分pyinstaller版本，并检查环境里是否有，没有则安装
-            local_package_dir = pyE.get_resource_path(findPythonExe.pyinstaller_choose(self.venvPython_exe))
-
-            findPythonExe.ensure_pyinstaller_installed(
-                self.venvPython_exe, local_package_dir
-            )
-
-        except Exception as e:
-            # 错误也要回到主线程处理
-            self.root.after(
-                0, lambda: messagebox.showerror("错误", f"PyInstaller准备出错：{e}")
-            )
-
             
     def update_info_text(self, text):
         # 这里改成替换显示内容
@@ -461,9 +440,8 @@ class PackApp:
         self.root.after(0, _update)
 
     def do_build(self):
-        self.prepare_pyinstaller_and_callback()#检查目标虚拟环境是否有pyinstaller
         # self.root.update()
-        self.log_tree.grid();#self.log_scroll.grid();
+        self.log_text.grid();#self.log_scroll.grid();
         self.info.grid_remove()
         if not self.script_path or not os.path.isfile(self.script_path):
             messagebox.showerror("错误", "请选择有效的py文件")
@@ -485,65 +463,85 @@ class PackApp:
 
         def show_path_popup(parent, path):
             win = tb.Toplevel(parent)
-            win.title("打包完成")
+            win.title("完成")
             win.geometry(vwin_geometry)
             win.update_idletasks()
             parent.update_idletasks()
-            px = parent.winfo_x()
-            py = parent.winfo_y()
-            pw = parent.winfo_width()
-            ph = parent.winfo_height()
-            ww = win.winfo_width()
-            wh = win.winfo_height()
-            new_x = px + (pw - ww) // 2
-            new_y = py - wh - ph // 2
-            win.geometry(f"{ww}x{wh}+{new_x}+{new_y}")
-            # 设置子窗口始终置顶
+
+            # 居中
+            def center_child():
+                if not win.winfo_exists():
+                    return
+                try:
+                    pw, ph = parent.winfo_width(), parent.winfo_height()
+                    px, py = parent.winfo_x(), parent.winfo_y()
+                    ww, wh = win.winfo_width(), win.winfo_height()
+                    x = px + (pw - ww) // 2
+                    y = py + (ph - wh) // 2
+                    win.geometry(f"{ww}x{wh}+{x}+{y}")
+                except Exception:
+                    pass   # 防止窗口已销毁时报错(保险)
+
+            center_child()  # 初次居中
+
+            # 使子窗口随主窗口移动/缩放时居中
+            on_parent_move_id = parent.bind('<Configure>', lambda e: center_child(), add='+')
+
+            # 控件布局
             self.root.wm_attributes("-topmost", False)
             win.wm_attributes("-topmost", True)
-
             win.rowconfigure(0, weight=1)
             win.rowconfigure(1, weight=1)
             for col in range(5):
                 win.columnconfigure(col, weight=1)
-            tb.Label(win, text="打包完成！EXE在：").grid(
+            tb.Label(win, text="输出文件在：").grid(
                 row=0, column=0, columnspan=4, sticky="nsew", pady=(0, 0)
             )
             entry = tb.Entry(win)
-            entry.grid(row=1, column=0, columnspan=3, sticky="ew", padx=(10, 5))
+            entry.grid(row=1, column=0, sticky="ew", padx=(10, 5))
             entry.insert(0, path)
-            entry.config(state="normal")
+            entry.config(state="readonly")
+
+            def close_and_unbind():
+                try:
+                    parent.unbind('<Configure>', on_parent_move_id)
+                except Exception:
+                    pass
+                win.destroy()
 
             def copy_to_clipboard():
                 win.clipboard_clear()
                 win.clipboard_append(path)
                 win.update()
+                self.root.after(0, self.step1)
+                close_and_unbind()
 
             copybu = tb.Button(
                 win,
-                text="复制",
+                text="返回",
                 command=copy_to_clipboard,
                 bootstyle="success",
                 cursor="hand2",
             )
-            copybu.grid(row=1, column=3, sticky="ew", columnspan=2, padx=(0, 20))
+            copybu.grid(row=1, column=1, sticky="ew", columnspan=2, padx=(0, 5))
             entry.select_range(0, "end")
             entry.focus_set()
             win.transient(parent)
             win.grab_set()
-            # 在关闭窗口时取消置顶（可选）
+
             def on_close():
                 win.wm_attributes("-topmost", False)
                 self.root.wm_attributes("-topmost", self.always_on_top.get())
-                win.destroy()
+                close_and_unbind()
             win.protocol("WM_DELETE_WINDOW", on_close)
-            win.mainloop()
+            # 不用win.mainloop()
+
+
         
         def add_log_line(line):
-            # 主线程安全插入日志
             self.root.after(0, lambda: (
-                self.log_tree.insert("", "end", values=(line.strip(),)),
-                self.log_tree.yview_moveto(1.0)
+                self.log_text.insert("end", line.strip() + "\n"),
+                self.log_text.see("end")
             ))
 
         def run_build():
@@ -554,8 +552,14 @@ class PackApp:
                 print("图标路径:", self.icon_path)
                 print("资源文件夹:", self.resource_path)
                 print("输出目录:", self.dist_path)
-
-                returncode = pyE.build_exe_subprocess(
+                if 1:
+                    local_package_dir = pyE.get_resource_path(findPythonExe.pyinstaller_choose(self.venvPython_exe))
+                    findPythonExe.ensure_pyinstaller_installed(self.venvPython_exe, local_package_dir)
+                    build_exe_subprocess=pyE.build_exe_subprocess_pyinstaller;
+                else:
+                    findPythonExe.ensure_nuitka_installed(self.venvPython_exe)
+                    build_exe_subprocess=pyE.build_exe_subprocess_pyinstaller;
+                returncode = build_exe_subprocess(
                     script_path=self.script_path,
                     exe_name=self.exe_name,
                     windowed=not self.windowed.get(),
@@ -577,7 +581,6 @@ class PackApp:
             except Exception as e:
                 self.root.after(0, messagebox.showerror, "打包失败", str(e))
             self.root.after(0, self.btn_build.config, {"state": "normal"})
-            self.root.after(0, self.step1)
 
         threading.Thread(target=run_build).start()
 

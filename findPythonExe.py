@@ -23,95 +23,70 @@ def Count_timeCost():
     return time_since_last
 
 def find_compatible_python(pyfile):
-    """查找能够运行给定Python文件的所有依赖的Python解释器路径（优先当前解释器）"""
-
-    def get_python_executables():
-        """获取系统中所有可用的Python解释器路径（去重, 过滤WindowsApps伪python）"""
-        paths = set()
-        plat = platform.system()
-        commands = []
-        if plat == "Windows":
-            commands.append("where python")
-        else:
-            commands.append("which -a python3")
-            commands.append("which -a python")
-        for cmd in commands:
+    """优先本目录虚拟环境，再检查系统其他python，返回可运行pyfile的python解释器路径"""
+    def check_imported_packages(pyfile, python_exe):
+        # 检查pyfile import的包是否都在python_exe里已安装
+        import ast
+        with open(pyfile, encoding="utf-8") as f:
+            root = ast.parse(f.read(), pyfile)
+        modules = set()
+        for node in ast.walk(root):
+            if isinstance(node, ast.Import):
+                modules.update(n.name.split('.')[0] for n in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules.add(node.module.split('.')[0])
+        # 跳过内置
+        stdlib = set(sys.builtin_module_names)
+        for m in modules:
+            if m in stdlib or m == '__future__': continue
+            code = (
+                f"import importlib.util; "
+                f"print(1 if importlib.util.find_spec('{m}') is None else 0)"
+            )
             try:
-                out = subprocess.check_output(
-                    cmd, 
-                    shell=True, 
-                    encoding="gbk" if plat == "Windows" else "utf-8",
-                    stderr=subprocess.DEVNULL
-                )
-                for line in out.splitlines():
-                    if os.path.isfile(line.strip()):
-                        paths.add(os.path.realpath(line.strip()))
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                continue
-        # 添加常见路径...
-        username = os.getlogin()
-        common_paths = [
-            r"C:\Python\python.exe",
-            r"C:\Python3\python.exe",
-            r"C:\ProgramData\Anaconda3\python.exe",
-            r"C:\ProgramData\Miniconda3\python.exe",
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\python.exe"),
-            os.path.expandvars(r"%APPDATA%\Python\python.exe"),
-            f"C:\\Users\\{username}\\.conda\\envs\\venv\\python.exe",
-            f"C:\\Users\\{username}\\Anaconda3\\python.exe",
-            f"C:\\Users\\{username}\\Miniconda3\\python.exe",
-            f"C:\\Users\\{username}\\.conda\\envs\\base\\python.exe",
-            f"C:\\Users\\{username}\\.conda\\envs\\venv\\python.exe",
-        ]
-        for path in common_paths:
-            if os.path.isfile(path):
-                paths.add(os.path.realpath(path))
-        # ------- 关键：过滤windowsapps伪python -------
-        windowsapps_dir = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps").lower()
-        filtered_paths = []
-        for exe in paths:
-            exe_low = exe.lower()
-            if exe_low.startswith(windowsapps_dir):
-                continue  # 过滤掉伪壳
-            if "windowsapps" in exe_low:
-                continue
-            if not os.path.isfile(exe):
-                continue
-            filtered_paths.append(exe)
-        # 按时间排序
-        return sorted(set(filtered_paths), key=lambda x: os.path.getmtime(x), reverse=True)
+                out = subprocess.check_output([python_exe, "-c", code], stderr=subprocess.DEVNULL)
+                if out.strip() == b'1':
+                    return m  # 缺失直接返回模块名（有缺就算不兼容）
+            except Exception:
+                return m
+        return None  # 全都装了
 
-    # --- 主逻辑 ---
-    if not os.path.isfile(pyfile):
-        raise FileNotFoundError(f"文件不存在: {pyfile}")
+    # 1. 优先本地虚拟环境
+    base = os.path.dirname(os.path.abspath(pyfile))
+    venvs = ['venv', '.venv', '.env', 'env']
+    for v in venvs:
+        pyexe = os.path.join(base, v, 'Scripts' if os.name=='nt' else 'bin', 'python.exe' if os.name=='nt' else 'python')
+        if os.path.isfile(pyexe):
+            if not check_imported_packages(pyfile, pyexe):
+                return pyexe
 
-    # 优先检查当前python解释器
-    current_exe = os.path.realpath(sys.executable)
-    name_now=os.path.basename(current_exe).lower()
-    if "python" in name_now and name_now.endswith(".exe"):  #判断必须有python和exe字样
-        missing_pkgs = check_imported_packages_in_target_python(pyfile, current_exe)
-        if not missing_pkgs:
-            return current_exe  # 当前环境最优
+    # 2. 当前python
+    cur_exe = sys.executable
+    if not check_imported_packages(pyfile, cur_exe):
+        return cur_exe
 
-    # 其它解释器
-    pyexes = get_python_executables()
-    # 防止重复检测
-    pyexes = [exe for exe in pyexes if os.path.realpath(exe) != current_exe]
-    if not pyexes:
-        return None
+    # 3. 系统其余python（where/which）
+    plat = platform.system()
+    paths = set()
+    cmds = ["where python"] if plat=="Windows" else ["which -a python3", "which -a python"]
+    for cmd in cmds:
+        try:
+            out = subprocess.check_output(cmd, shell=True, encoding="utf-8", stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                p = os.path.realpath(line.strip())
+                if os.path.isfile(p): paths.add(p)
+        except Exception:
+            continue
 
-    # 使用线程池并行检查剩余解释器兼容性
-    with ThreadPoolExecutor(max_workers=min(8, len(pyexes))) as executor:
-        future_to_exe = {
-            executor.submit(check_imported_packages_in_target_python, pyfile, exe): exe
-            for exe in pyexes
-        }
-        for future in as_completed(future_to_exe):
-            missing_pkgs = future.result()
-            if not missing_pkgs:  # 如果没有缺失的包
-                return future_to_exe[future]  # 返回第一个找到的兼容解释器  
+    paths.discard(os.path.realpath(cur_exe))
+
+    # 并行检查其他python
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futu = {pool.submit(check_imported_packages, pyfile, exe): exe for exe in paths}
+        for f in as_completed(futu):
+            if not f.result():
+                return futu[f]
     return None
-
 
 def check_imported_packages_in_target_python(py_filepath, python_exe):
     """
@@ -248,18 +223,53 @@ def ensure_pyinstaller_installed(python_exe, local_package_dir):
     :param python_exe:      目标虚拟环境的 python 解释器路径
     :param local_package_dir: 存放 PyInstaller 及其依赖的本地包目录
     """
+
+    # 检查/安装 pip
+    def ensure_pip_installed(python_exe):
+        try:
+            subprocess.check_call([python_exe, '-m', 'pip', '--version'],
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+            return True
+        except subprocess.CalledProcessError:
+            print(f"环境 {python_exe} 未检测到 pip，正在尝试自动安装 pip ...")
+            try:
+                subprocess.check_call([python_exe, '-m', 'ensurepip'])
+                print("pip 安装成功。")
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"自动安装 pip 失败: {e}")
+                return False
+        except Exception as e:
+            print(f"检测 pip 失败: {e}")
+            return False
+
+    # 先保证 pip 可用
+    if not ensure_pip_installed(python_exe):
+        print(f"环境 {python_exe} 无法使用 pip，无法继续安装 PyInstaller。")
+        return False
+
+    # 检查 PyInstaller
+    def has_pyinstaller(python_exe):
+        try:
+            subprocess.check_call([
+                python_exe, '-c', 'import PyInstaller'
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
     if has_pyinstaller(python_exe):
         print(f"PyInstaller 已在环境 {python_exe} 中安装，跳过安装。")
         return True
-    print(f"环境 {python_exe} 未安装 PyInstaller，开始准备本地安装...")
 
+    print(f"环境 {python_exe} 未安装 PyInstaller，开始准备本地安装...")
     # 确认本地目录下存在 PyInstaller 安装包
     files = os.listdir(local_package_dir)
     if not any(f.lower().startswith("pyinstaller") and
                (f.endswith('.whl') or f.endswith('.tar.gz')) for f in files):
         print(f"在 {local_package_dir} 未找到 PyInstaller 安装包！")
         return False
-
     try:
         subprocess.check_call([
             python_exe, '-m', 'pip', 'install', 'pyinstaller',
@@ -271,6 +281,67 @@ def ensure_pyinstaller_installed(python_exe, local_package_dir):
     except subprocess.CalledProcessError as e:
         print(f"本地安装 PyInstaller 失败: {e}")
         return False
+
+def ensure_nuitka_installed(python_exe):
+    """
+    检查指定解释器中 Nuitka 是否已安装，若未安装则确保 pip 可用并联网安装 Nuitka。
+    :param python_exe: 目标虚拟环境的 python 解释器路径
+    :return: True 表示 Nuitka 已安装或安装成功，False 表示无法安装
+    """
+
+    def ensure_pip_installed(python_exe):
+        try:
+            subprocess.check_call(
+                [python_exe, '-m', 'pip', '--version'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return True
+        except subprocess.CalledProcessError:
+            print(f"环境 {python_exe} 未检测到 pip，正在尝试自动安装 pip ...")
+            try:
+                subprocess.check_call([python_exe, '-m', 'ensurepip'])
+                print("pip 安装成功。")
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"自动安装 pip 失败: {e}")
+                return False
+        except Exception as e:
+            print(f"检测 pip 失败: {e}")
+            return False
+
+    def has_nuitka(python_exe):
+        try:
+            subprocess.check_call(
+                [python_exe, "-c", "import nuitka"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    # 步骤1：确保 pip 可用
+    if not ensure_pip_installed(python_exe):
+        print(f"环境 {python_exe} 无法使用 pip，无法继续安装 Nuitka。")
+        return False
+
+    # 步骤2：判断nuitka是否已安装
+    if has_nuitka(python_exe):
+        print(f"Nuitka 已在环境 {python_exe} 中安装，跳过安装。")
+        return True
+
+    print(f"环境 {python_exe} 未安装 Nuitka，尝试使用 pip 在线安装 ...")
+    try:
+        subprocess.check_call([python_exe, "-m", "pip", "install", "nuitka"])
+        print("Nuitka 安装成功！")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"在线安装 Nuitka 失败: {e}")
+        return False
+
+
+
 
 def download_pyinstaller_and_deps(download_dir, version=None):
     """
@@ -326,10 +397,10 @@ if __name__ == "__main__":
     # # 下载PyInstaller 5.13.0及其依赖，对应Python3.6-3.8
     # download_pyinstaller_and_deps(r'resource\PyInstaller5_13_bag', version="5.13.0")
     # # 下载PyInstaller 最新及其依赖，对应Python3.8+
-    download_pyinstaller_and_deps(r'resource\PyInstaller_last_bag')
+    #download_pyinstaller_and_deps(r'resource\PyInstaller_last_bag')
 
     # ==== 检查并本地安装PyInstaller用（目标环境） ====
-    python_exe = r'G:\VScode\VScode\.conda\python.exe'           # 你的目标 Python 路径
+    python_exe = r'G:\VScode\VScode\test\.venv\Scripts\python.exe'           # 你的目标 Python 路径
     # local_package_dir = r'resource\PyInstaller513_bag'               # 离线whl包存放路径
     # ensure_pyinstaller_installed(python_exe, local_package_dir)
     print(pyinstaller_choose(python_exe))
