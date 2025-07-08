@@ -154,26 +154,26 @@ class PackApp:
         chk_windowed.grid(row=1, column=0, sticky="nsew", padx=(0, 5), pady=(0, 5))
         ToolTip(chk_windowed , text="打包为exe后启动时, 是否开开启cmd命令窗口")
 
-        chk_windowed = tb.Checkbutton(
+        chk_resource_bt = tb.Checkbutton(
             fr,
             text="资源内嵌",
             variable=self.resource_into_exe,
             bootstyle="info",
         )
-        chk_windowed.grid(row=1, column=1, sticky="nsew", padx=(0, 10), pady=(0, 5))
-        ToolTip(chk_windowed , text="选择资源文件夹(如果有)是否内嵌到exe")
-
-        self.selected_var = tb.StringVar()  # 变量，决定互斥哪一项是选中的
+        chk_resource_bt.grid(row=1, column=1, sticky="nsew", padx=(0, 10), pady=(0, 5))
+        ToolTip(chk_resource_bt , text="选择资源文件夹(如果有)是否内嵌到exe")
+        tt()
+        
         self.radio1 = tb.Radiobutton(fr, text="Pyinstaller", value="Pyinstaller", 
                                 variable=self.selected_var,bootstyle="secondary")
-        ToolTip(self.radio1 , text="python环境、打包快、体积大")
+        ToolTip(self.radio1 , text="1.python环境、打包快、体积大\n2.支持中文, 透明")
         self.radio2 = tb.Radiobutton(fr, text="Nuitka", value="Nuitka",
                                  variable=self.selected_var,bootstyle="secondary")
         self.radio1.grid(row=1,column=2)
         self.radio2.grid(row=1, column=3)
-        ToolTip(self.radio2 , text="C转译、打包慢、体积小")
-        self.radio1.invoke()  # 默认勾选A
-
+        ToolTip(self.radio2 , text="1.C转译、打包慢、体积小\n2.不支持中文, 反编译")
+        # self.radio1.invoke()  # 默认勾选A
+        tt()
         self.venvPython = tb.Button(
             fr,
             text="Python环境",
@@ -191,7 +191,7 @@ class PackApp:
             self.lbl.drop_target_register(DND_FILES)
             self.lbl.dnd_bind("<<Drop>>", lambda e: self.on_py_dropped(e))
 
-        self.widgets += [self.lbl, chk_windowed, self.venvPython]
+        self.widgets += [self.lbl, chk_windowed,self.radio1,self.radio2,chk_resource_bt, self.venvPython]
 
     def on_py_dropped(self, event):
         paths = self.root.tk.splitlist(event.data)
@@ -284,10 +284,10 @@ class PackApp:
             row=1, column=1, columnspan=1, sticky="nsew", padx=(0, 20), pady=(0, 5)
         )
 
-        btn_last = tb.Button(
+        self.btn_last = tb.Button(
             fr, text="上一步", command=lambda: self.step1(), bootstyle="success-outline"
         )
-        btn_last.grid(row=1, column=2, sticky="nsew", padx=(0, 5), pady=(0, 5))
+        self.btn_last.grid(row=1, column=2, sticky="nsew", padx=(0, 5), pady=(0, 5))
 
         btn_next = tb.Button(
             fr,
@@ -317,7 +317,7 @@ class PackApp:
         if DNDOK:
             self.lbl_icon.drop_target_register(DND_FILES)
             self.lbl_icon.dnd_bind("<<Drop>>", lambda e: self.on_ico_dropped(e))
-        self.widgets += [en_name, self.lbl_icon, btn_next]
+        self.widgets += [en_name, btn_resource_path,self.lbl_icon, btn_next]
         
         print(f"解释器路径：{self.venvPython_exe}")
     def on_ico_dropped(self, event):
@@ -391,28 +391,30 @@ class PackApp:
         )
 
 
-    # Treeview 日志，不显示标题
-        self.log_text = ScrolledText(fr, wrap="word", height=15)
+    #  日志，不显示标题
+        # self.log_text = ScrolledText(fr, wrap="word", height=15)
+        # self.log_text.grid(row=0, column=0, columnspan=4, sticky="nsew", pady=(0, 10), padx=8)
+        # self.log_text.grid_remove()   # ← 一创建即隐藏
+        self.log_text = tb.Text(fr, wrap="word", height=15)
         self.log_text.grid(row=0, column=0, columnspan=4, sticky="nsew", pady=(0, 10), padx=8)
-        self.log_text.grid_remove()   # ← 一创建即隐藏
+        self.log_text.grid_remove()
 
 
         self.dist_path = os.path.join(os.getcwd(), "dist")
         self.info.config(text=self.Now_load_info())  # 更新
 
-        btn_last = tb.Button(
+        self.btn_last = tb.Button(
             fr, text="上一步", command=lambda: self.step2(), bootstyle="success-outline"
         )
-        btn_last.grid(row=1, column=0, sticky="nsew", padx=(0, 5), pady=(0, 5))
+        self.btn_last.grid(row=1, column=0, sticky="nsew", padx=(0, 5), pady=(0, 5))
 
-        btn_dist = tb.Button(
+        self.btn_dist = tb.Button(
             fr,
             text="文件夹",
             command=lambda: self.choose_dist(),
             bootstyle="info-outline",
         )
-        btn_dist.grid(row=1, column=1, sticky="nsew", padx=(0, 5), pady=(0, 5))
-        tt()
+        self.btn_dist.grid(row=1, column=1, sticky="nsew", padx=(0, 5), pady=(0, 5))
         # 步骤A: 加载图片并缩放
         img = Image.open(pyE.get_resource_path('resource\火箭 (1).png'))
         img = img.resize((20, 20), Image.LANCZOS)  # 你可以调整尺寸
@@ -428,10 +430,9 @@ class PackApp:
         )
         self.btn_build.image = photo  # 防止图像被垃圾回收
 
-        tt()
         self.btn_build.grid(row=1, column=3, sticky="nsew", padx=(0, 5), pady=(0, 5))
 
-        self.widgets += [self.info, btn_dist, btn_last, self.btn_build]
+        self.widgets += [self.info,self.log_text, self.btn_dist, self.btn_last, self.btn_build]
 
     def choose_dist(self):
         d = filedialog.askdirectory(title="选择EXE保存目录")
@@ -477,6 +478,8 @@ class PackApp:
             messagebox.showerror("错误", "请选择正确的python解释器")
             return
         self.btn_build.config(state="disabled")
+        self.btn_last.config(state="disabled")
+        self.btn_dist.config(state="disabled")
 
         def show_path_popup(parent, path):
             win = tb.Toplevel(parent)
@@ -499,7 +502,7 @@ class PackApp:
                 except Exception:
                     pass   # 防止窗口已销毁时报错(保险)
 
-            center_child()  # 初次居中
+            win.after(0, center_child)  # <<--- 让它首帧渲染结束后再居中
 
             # 使子窗口随主窗口移动/缩放时居中
             on_parent_move_id = parent.bind('<Configure>', lambda e: center_child(), add='+')
@@ -530,12 +533,12 @@ class PackApp:
                 win.clipboard_clear()
                 win.clipboard_append(path)
                 win.update()
-                self.root.after(0, self.step1)
                 close_and_unbind()
+                self.root.after(0, self.step1)
 
             copybu = tb.Button(
                 win,
-                text="返回",
+                text="复制",
                 command=copy_to_clipboard,
                 bootstyle="success",
                 cursor="hand2",
@@ -550,6 +553,7 @@ class PackApp:
                 win.wm_attributes("-topmost", False)
                 self.root.wm_attributes("-topmost", self.always_on_top.get())
                 close_and_unbind()
+                self.root.after(0, self.step1)
             win.protocol("WM_DELETE_WINDOW", on_close)
             # 不用win.mainloop()
 
@@ -597,7 +601,7 @@ class PackApp:
 
             except Exception as e:
                 self.root.after(0, messagebox.showerror, "打包失败", str(e))
-            self.root.after(0, self.btn_build.config, {"state": "normal"})
+            # self.root.after(0, self.btn_build.config, {"state": "normal"})
 
         threading.Thread(target=run_build).start()
 
@@ -614,6 +618,14 @@ if __name__ == "__main__":
 
     app = PackApp(root)
     # app.step2()
-    # << geometry 不在 __init__ 内写死，由这里统一设置 >>
-    root.geometry(win_geometry)
+    # 设置窗口居中
+    win_w, win_h = map(int, win_geometry.split("x"))
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    x = (screen_w - win_w) // 2
+    y = (screen_h - win_h) // 2
+    root.geometry(f"{win_geometry}+{x}+{y}")  # 左上角坐标
+
+    icon = tk.PhotoImage(file= pyE.get_resource_path(r"resource\android-chrome-192x192.png"))
+    root.iconphoto(True, icon)
     root.mainloop()
