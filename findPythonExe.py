@@ -6,6 +6,16 @@ import platform
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
+
+#python虚拟环境与包判断
+
+#访问目标资源，使得能在打包后还能获取
+def get_resource_path(relpath):
+    # relpath 例如: 'resource/xxx.png'
+    if hasattr(sys, '_MEIPASS'):            #打包后exe
+        return os.path.join(sys._MEIPASS, relpath)
+    return os.path.join(os.path.dirname(__file__), relpath)   # 纯源码情况
+
 # 创建一个闭包函数，用于跟踪上次插入时间
 def Count_timeCost():
     last_time = [None]
@@ -23,6 +33,10 @@ def Count_timeCost():
     return time_since_last
 
 def find_compatible_python(pyfile):
+
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     """优先本目录虚拟环境，再检查系统其他python，返回可运行pyfile的python解释器路径"""
     def check_imported_packages(pyfile, python_exe):
         # 检查pyfile import的包是否都在python_exe里已安装
@@ -38,13 +52,18 @@ def find_compatible_python(pyfile):
         # 跳过内置
         stdlib = set(sys.builtin_module_names)
         for m in modules:
-            if m in stdlib or m == '__future__': continue
+            if m in stdlib or m == '__future__':
+                continue
             code = (
                 f"import importlib.util; "
                 f"print(1 if importlib.util.find_spec('{m}') is None else 0)"
             )
             try:
-                out = subprocess.check_output([python_exe, "-c", code], stderr=subprocess.DEVNULL)
+                out = subprocess.check_output(
+                    [python_exe, "-c", code],
+                    stderr=subprocess.DEVNULL,
+                    creationflags=flags   # 这里加入
+                )
                 if out.strip() == b'1':
                     return m  # 缺失直接返回模块名（有缺就算不兼容）
             except Exception:
@@ -71,7 +90,10 @@ def find_compatible_python(pyfile):
     cmds = ["where python"] if plat=="Windows" else ["which -a python3", "which -a python"]
     for cmd in cmds:
         try:
-            out = subprocess.check_output(cmd, shell=True, encoding="utf-8", stderr=subprocess.DEVNULL)
+            out = subprocess.check_output(
+                cmd, shell=True, encoding="utf-8", 
+                stderr=subprocess.DEVNULL,creationflags=flags
+                )
             for line in out.splitlines():
                 p = os.path.realpath(line.strip())
                 if os.path.isfile(p): paths.add(p)
@@ -94,6 +116,9 @@ def check_imported_packages_in_target_python(py_filepath, python_exe):
     返回未安装的包名集合
     优化：多包一次性检测，极大提升效率
     """
+    flags = 0
+    if sys.platform == "win32":  #是否为windows平台
+        flags = subprocess.CREATE_NO_WINDOW
 
     def get_imported_packages(py_filepath):
         """解析.py文件中的import包（返回顶层包名集合）"""
@@ -137,7 +162,8 @@ except Exception as e:
     print("ERROR:", traceback.format_exc())
             """
             result = subprocess.run(
-                [python_exe, "-c", code], capture_output=True, text=True
+                [python_exe, "-c", code], capture_output=True, text=True,
+                    creationflags=flags
             )
             if result.stderr:
                 print(f"[get_stdlib_modules] stderr from '{python_exe}':\n{result.stderr}")
@@ -183,7 +209,8 @@ except Exception as e:
         "print('\\n'.join(missing))"
     )
     result = subprocess.run([python_exe, "-c", code],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True,
+                    creationflags=flags)
     if result.returncode != 0:
         # debug 输出
         print("[DEBUG] 子进程异常！")
@@ -202,13 +229,17 @@ def has_pyinstaller(python_exe):
     """
     检查指定解释器中 PyInstaller 是否已安装
     """
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     try:
         result = subprocess.run(
             [python_exe, "-c", "import PyInstaller"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=10
+            timeout=10,
+            creationflags=flags
         )
         return result.returncode == 0
     except Exception:
@@ -223,18 +254,22 @@ def ensure_pyinstaller_installed(python_exe, local_package_dir):
     :param python_exe:      目标虚拟环境的 python 解释器路径
     :param local_package_dir: 存放 PyInstaller 及其依赖的本地包目录
     """
-
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     # 检查/安装 pip
     def ensure_pip_installed(python_exe):
         try:
             subprocess.check_call([python_exe, '-m', 'pip', '--version'],
                                   stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL)
+                                  stderr=subprocess.DEVNULL,
+                                  creationflags=flags)
             return True
         except subprocess.CalledProcessError:
             print(f"环境 {python_exe} 未检测到 pip，正在尝试自动安装 pip ...")
             try:
-                subprocess.check_call([python_exe, '-m', 'ensurepip'])
+                subprocess.check_call([python_exe, '-m', 'ensurepip'],
+                                  creationflags=flags)
                 print("pip 安装成功。")
                 return True
             except subprocess.CalledProcessError as e:
@@ -254,7 +289,8 @@ def ensure_pyinstaller_installed(python_exe, local_package_dir):
         try:
             subprocess.check_call([
                 python_exe, '-c', 'import PyInstaller'
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=flags)
             return True
         except subprocess.CalledProcessError:
             return False
@@ -275,7 +311,7 @@ def ensure_pyinstaller_installed(python_exe, local_package_dir):
             python_exe, '-m', 'pip', 'install', 'pyinstaller',
             '--no-index',
             '--find-links', local_package_dir
-        ])
+        ], creationflags=flags)
         print(f"已用本地包目录 {local_package_dir} 安装 PyInstaller 到 {python_exe}！")
         return True
     except subprocess.CalledProcessError as e:
@@ -288,19 +324,21 @@ def ensure_nuitka_installed(python_exe):
     :param python_exe: 目标虚拟环境的 python 解释器路径
     :return: True 表示 Nuitka 已安装或安装成功，False 表示无法安装
     """
-
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     def ensure_pip_installed(python_exe):
         try:
             subprocess.check_call(
                 [python_exe, '-m', 'pip', '--version'],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,creationflags=flags
             )
             return True
         except subprocess.CalledProcessError:
             print(f"环境 {python_exe} 未检测到 pip，正在尝试自动安装 pip ...")
             try:
-                subprocess.check_call([python_exe, '-m', 'ensurepip'])
+                subprocess.check_call([python_exe, '-m', 'ensurepip'],creationflags=flags)
                 print("pip 安装成功。")
                 return True
             except subprocess.CalledProcessError as e:
@@ -315,7 +353,7 @@ def ensure_nuitka_installed(python_exe):
             subprocess.check_call(
                 [python_exe, "-c", "import nuitka"],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,creationflags=flags
             )
             return True
         except subprocess.CalledProcessError:
@@ -333,7 +371,7 @@ def ensure_nuitka_installed(python_exe):
 
     print(f"环境 {python_exe} 未安装 Nuitka，尝试使用 pip 在线安装 ...")
     try:
-        subprocess.check_call([python_exe, "-m", "pip", "install", "nuitka"])
+        subprocess.check_call([python_exe, "-m", "pip", "install", "nuitka"],creationflags=flags)
         print("Nuitka 安装成功！")
         return True
     except subprocess.CalledProcessError as e:
@@ -347,7 +385,9 @@ def download_pyinstaller_and_deps(download_dir, version=None):
     """
     从PyPI联网下载特定版本或最新版PyInstaller及其依赖到指定目录。
     """
-    import os, sys, subprocess
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     os.makedirs(download_dir, exist_ok=True)
     if version:
         pkg_spec = f"PyInstaller=={version}"
@@ -355,16 +395,19 @@ def download_pyinstaller_and_deps(download_dir, version=None):
         pkg_spec = "PyInstaller"
     subprocess.check_call([
         sys.executable, "-m", "pip", "download", pkg_spec, "-d", download_dir
-    ])
+    ],creationflags=flags)
     print(f"PyInstaller {version or '最新'} 及其依赖已下载到 {download_dir}")
 
 
 def get_python_version(python_exe_path):
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     try:
         result = subprocess.run(
             [python_exe_path, '-V'],
             capture_output=True,
-            text=True
+            text=True,creationflags=flags
         )
         output = result.stdout.strip() or result.stderr.strip()
         m = re.search(r'Python\s+(\d+)\.(\d+)', output)
@@ -378,11 +421,11 @@ def get_python_version(python_exe_path):
 def pyinstaller_choose(python_exe):#选择pyinstaller版本
     version_tuple=get_python_version(python_exe)
     if (2, 7) <= version_tuple <= (3, 5):
-        return r'resource\PyInstaller3_6_bag'
+        return get_resource_path(r'resource\PyInstaller3_6_bag')
     elif (3, 6) <= version_tuple <= (3, 8):
-        return r'resource\PyInstaller5_13_bag'
+        return get_resource_path(r'resource\PyInstaller5_13_bag')
     elif version_tuple >= (3, 9):
-        return r'resource\PyInstaller_last_bag'
+        return get_resource_path(r'resource\PyInstaller_last_bag')
     else:
         raise ValueError(f"不支持的Python版本: {version_tuple}")
     
