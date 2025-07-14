@@ -3,6 +3,9 @@ import sys
 import locale
 import subprocess
 import shutil
+import ast
+#打包函数
+
 #访问目标资源，使得能在打包后还能获取
 def get_resource_path(relpath):
     # relpath 例如: 'resource/xxx.png'
@@ -29,7 +32,48 @@ def build_exe_subprocess_pyinstaller(
     output_callback=None,
     resource_dir=None,  # 新增参数：资源包文件夹名或相对路径
 ):
+    
 
+    def _script_uses_tkinter(script_path):
+        """静态扫描脚本代码是否用了tkinter/ttk/ttkbootstrap等"""
+        try:
+            with open(script_path, encoding="utf-8") as f:
+                src = f.read()
+            for pat in [
+                "import tkinter", "from tkinter",
+                "import Tkinter", "from Tkinter",
+                "import ttk", "from ttk",
+                "import tkinter.ttk", "from tkinter.ttk",
+                "import ttkbootstrap", "from ttkbootstrap",
+            ]:
+                if pat in src:
+                    return True
+            return False
+        except Exception:
+            return False
+        
+    def _find_tcl_tk_data(python_exe):
+        # 查找 tcl、tk DLL 及 tcl 目录，适配常规 Python 安装/虚拟环境
+        base = os.path.dirname(os.path.dirname(python_exe))
+        tcl_dir = ""
+        if os.path.isdir(os.path.join(base, "tcl")):
+            tcl_dir = os.path.join(base, "tcl")
+        elif os.path.isdir(os.path.join(base, "Lib", "tcl")):
+            tcl_dir = os.path.join(base, "Lib", "tcl")
+        else:
+            tcl_dir = ""
+        dll_dir = os.path.join(base, "DLLs")
+        dlls = []
+        if os.path.isdir(dll_dir):
+            for f in os.listdir(dll_dir):
+                if f.lower().startswith(("tk", "tcl")) and f.lower().endswith(".dll"):
+                    dlls.append(os.path.join(dll_dir, f))
+        return tcl_dir, dlls       
+
+    
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     opts = [
         "--name",
         exe_name,
@@ -59,6 +103,18 @@ def build_exe_subprocess_pyinstaller(
             if output_callback:
                 output_callback(f"资源文件夹不存在: {resource_absdir}\n")
     # ----------------------------------
+        #自动识别Tk/ttk缺少的文件并加入
+    if _script_uses_tkinter(script_path):
+        python_exe = python_executable or sys.executable
+        tcl_dir, dlls = _find_tcl_tk_data(python_exe)
+        sep = ';' if os.name == 'nt' else ':'
+        if tcl_dir:
+            opts.append(f"--add-data={tcl_dir}{sep}tcl")
+        for dll in dlls:
+            opts.append(f"--add-binary={dll}{sep}.")
+        if output_callback:
+            output_callback("检测到脚本用到tkinter/ttk，已自动添加tcl目录及DLL依赖。\n")
+  # ----------------------------------
 
     opts.append(script_path)
     if python_executable is None:
@@ -74,6 +130,7 @@ def build_exe_subprocess_pyinstaller(
             text=False,   # 注意: 不自动解码
             # encoding=locale.getpreferredencoding(False),
             bufsize=1,
+            creationflags=flags     # 这里加上
         )
         for line_b in iter(process.stdout.readline, b''):
             line = safe_decode(line_b)
@@ -145,7 +202,9 @@ def build_exe_subprocess_nuitka(
     仿pyinstaller接口，使用nuitka打包。参数定义一致，便于无缝切换。
     自动检测是否用到tkinter，并自动加--enable-plugin=tk-inter。
     """
-
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.CREATE_NO_WINDOW
     def _script_uses_tkinter(script_path):
         """静态扫描脚本代码是否用了tkinter"""
         try:
@@ -251,6 +310,7 @@ def build_exe_subprocess_nuitka(
             stderr=subprocess.STDOUT,
             text=False,
             bufsize=1,
+            creationflags=flags     # 这里加上
         )
         for line_b in iter(process.stdout.readline, b''):
             line = safe_decode(line_b)

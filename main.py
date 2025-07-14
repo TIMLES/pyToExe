@@ -557,14 +557,20 @@ class PackApp:
             win.protocol("WM_DELETE_WINDOW", on_close)
             # 不用win.mainloop()
 
-
-        
         def add_log_line(line):
             self.root.after(0, lambda: (
                 self.log_text.insert("end", line.strip() + "\n"),
                 self.log_text.see("end")
             ))
 
+            
+        if self.selected_var.get()=='Pyinstaller':
+            local_package_dir = pyE.get_resource_path(findPythonExe.pyinstaller_choose(self.venvPython_exe))
+            findPythonExe.ensure_pyinstaller_installed(self.venvPython_exe, local_package_dir)
+            build_exe_subprocess=pyE.build_exe_subprocess_pyinstaller;
+        else:
+            findPythonExe.ensure_nuitka_installed(self.venvPython_exe)
+            build_exe_subprocess=pyE.build_exe_subprocess_nuitka;
         def run_build():
             try:
                 print(".py路径:", self.script_path)
@@ -573,13 +579,7 @@ class PackApp:
                 print("图标路径:", self.icon_path)
                 print("资源文件夹:", self.resource_path)
                 print("输出目录:", self.dist_path)
-                if self.selected_var.get()=='Pyinstaller':
-                    local_package_dir = pyE.get_resource_path(findPythonExe.pyinstaller_choose(self.venvPython_exe))
-                    findPythonExe.ensure_pyinstaller_installed(self.venvPython_exe, local_package_dir)
-                    build_exe_subprocess=pyE.build_exe_subprocess_pyinstaller;
-                else:
-                    findPythonExe.ensure_nuitka_installed(self.venvPython_exe)
-                    build_exe_subprocess=pyE.build_exe_subprocess_nuitka;
+
                 returncode = build_exe_subprocess(
                     script_path=self.script_path,
                     exe_name=self.exe_name,
