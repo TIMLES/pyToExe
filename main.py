@@ -445,7 +445,7 @@ class PackApp:
             f"【名称】:   {os.path.basename(self.exe_name)}({os.path.basename(self.script_path)})\n"
             f"【图标】:   {os.path.basename(self.icon_path)}\n"
             f"【资源】:   {os.path.basename(self.resource_path) or '无'}\n"
-            f"【输出至文件夹】:\n      {self.dist_path}\n"
+            f"【输出至文件夹】:   {self.dist_path}\n"
             f"【解释器】:\n      " + self.venvPython_exe + "\n"
         )
         return aaaa

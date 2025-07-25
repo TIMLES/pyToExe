@@ -32,56 +32,27 @@ def Count_timeCost():
         counter[0] += 1
     return time_since_last
 
+
+#发现python路径
 def find_compatible_python(pyfile):
 
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.CREATE_NO_WINDOW
-    """优先本目录虚拟环境，再检查系统其他python，返回可运行pyfile的python解释器路径"""
-    def check_imported_packages(pyfile, python_exe):
-        # 检查pyfile import的包是否都在python_exe里已安装
-        import ast
-        with open(pyfile, encoding="utf-8") as f:
-            root = ast.parse(f.read(), pyfile)
-        modules = set()
-        for node in ast.walk(root):
-            if isinstance(node, ast.Import):
-                modules.update(n.name.split('.')[0] for n in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                modules.add(node.module.split('.')[0])
-        # 跳过内置
-        stdlib = set(sys.builtin_module_names)
-        for m in modules:
-            if m in stdlib or m == '__future__':
-                continue
-            code = (
-                f"import importlib.util; "
-                f"print(1 if importlib.util.find_spec('{m}') is None else 0)"
-            )
-            try:
-                out = subprocess.check_output(
-                    [python_exe, "-c", code],
-                    stderr=subprocess.DEVNULL,
-                    creationflags=flags   # 这里加入
-                )
-                if out.strip() == b'1':
-                    return m  # 缺失直接返回模块名（有缺就算不兼容）
-            except Exception:
-                return m
-        return None  # 全都装了
 
     # 1. 优先本地虚拟环境
     base = os.path.dirname(os.path.abspath(pyfile))
-    venvs = ['venv', '.venv', '.env', 'env']
+    venvs = ['.venv', 'venv', '.env', 'env']
     for v in venvs:
         pyexe = os.path.join(base, v, 'Scripts' if os.name=='nt' else 'bin', 'python.exe' if os.name=='nt' else 'python')
         if os.path.isfile(pyexe):
-            if not check_imported_packages(pyfile, pyexe):
+            if not check_imported_packages_in_target_python(pyfile, pyexe):
+                print(f'OK: {pyexe}')
                 return pyexe
 
     # 2. 当前python
     cur_exe = sys.executable
-    if not check_imported_packages(pyfile, cur_exe):
+    if not check_imported_packages_in_target_python(pyfile, cur_exe):
         return cur_exe
 
     # 3. 系统其余python（where/which）
@@ -104,12 +75,13 @@ def find_compatible_python(pyfile):
 
     # 并行检查其他python
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futu = {pool.submit(check_imported_packages, pyfile, exe): exe for exe in paths}
+        futu = {pool.submit(check_imported_packages_in_target_python, pyfile, exe): exe for exe in paths}
         for f in as_completed(futu):
             if not f.result():
                 return futu[f]
     return None
 
+#检查目标路径是否包含所有包
 def check_imported_packages_in_target_python(py_filepath, python_exe):
     """
     检查 py_filepath 所 import 的所有包（非标准库、非本地模块）在目标解释器 python_exe 下是否都已安装
