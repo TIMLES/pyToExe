@@ -32,7 +32,16 @@ def Count_timeCost():
         counter[0] += 1
     return time_since_last
 
-
+#是否为有用的python路径
+def is_valid_python_exe(p):
+    if not os.path.isfile(p):
+        return False
+    try:
+        result = subprocess.run([p, "-V"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out = (result.stdout or result.stderr).decode("utf-8", errors="ignore")
+        return "Python" in out
+    except Exception:
+        return False
 #发现python路径
 def find_compatible_python(pyfile):
 
@@ -67,7 +76,10 @@ def find_compatible_python(pyfile):
                 )
             for line in out.splitlines():
                 p = os.path.realpath(line.strip())
-                if os.path.isfile(p): paths.add(p)
+                if "WindowsApps" in p:
+                    continue
+                if is_valid_python_exe(p):
+                    paths.add(p)
         except Exception:
             continue
 
