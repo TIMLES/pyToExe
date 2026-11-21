@@ -1,25 +1,33 @@
 import os
 import sys
-import locale
 import subprocess
 import shutil
 import ast
 #打包函数
 
-#访问目标资源，使得能在打包后还能获取
-def get_resource_path(relpath):
-    # relpath 例如: 'resource/xxx.png'
-    if hasattr(sys, '_MEIPASS'):            #打包后exe
-        return os.path.join(sys._MEIPASS, relpath)
-    return os.path.join(os.path.dirname(__file__), relpath)   # 纯源码情况
-#编码问题
-def safe_decode(line_bytes):
-    for enc in [locale.getpreferredencoding(False), 'utf-8', 'gbk']:
-        try:
-            return line_bytes.decode(enc)
-        except Exception:
-            continue
-    return line_bytes.decode('utf-8', errors='replace')
+from useful_func import get_resource_path,safe_decode
+def _script_uses_tkinter(script_path):
+    """静态扫描脚本代码是否用了tkinter/ttk/ttkbootstrap等"""
+    try:
+        with open(script_path, encoding="utf-8") as f:
+            src = f.read()
+        for pat in [
+            "import tkinter", "from tkinter",
+            "import Tkinter", "from Tkinter",
+            "import ttk", "from ttk",
+        ]:
+            if pat in src:
+                return "tkinter"
+        for pat in [
+            "import tkinter.ttk", "from tkinter.ttk",
+            "import ttkbootstrap", "from ttkbootstrap",
+        ]:
+            if pat in src:
+                return "ttkbootstrap"
+        
+        return None
+    except Exception:
+        return None
 
 def build_exe_subprocess_pyinstaller(
     script_path,
@@ -31,26 +39,8 @@ def build_exe_subprocess_pyinstaller(
     python_executable=None,  # 新增参数
     output_callback=None,
     resource_dir=None,  # 新增参数：资源包文件夹名或相对路径
-):
+    ):
     
-
-    def _script_uses_tkinter(script_path):
-        """静态扫描脚本代码是否用了tkinter/ttk/ttkbootstrap等"""
-        try:
-            with open(script_path, encoding="utf-8") as f:
-                src = f.read()
-            for pat in [
-                "import tkinter", "from tkinter",
-                "import Tkinter", "from Tkinter",
-                "import ttk", "from ttk",
-                "import tkinter.ttk", "from tkinter.ttk",
-                "import ttkbootstrap", "from ttkbootstrap",
-            ]:
-                if pat in src:
-                    return True
-            return False
-        except Exception:
-            return False
         
     def _find_tcl_tk_data(python_exe):
         # 查找 tcl、tk DLL 及 tcl 目录，适配常规 Python 安装/虚拟环境
@@ -105,7 +95,7 @@ def build_exe_subprocess_pyinstaller(
     # ----------------------------------
         #自动识别Tk/ttk缺少的文件并加入
     if _script_uses_tkinter(script_path):
-        python_exe = python_executable or sys.executable
+        python_exe = python_executable
         tcl_dir, dlls = _find_tcl_tk_data(python_exe)
         sep = ';' if os.name == 'nt' else ':'
         if tcl_dir:
@@ -117,8 +107,6 @@ def build_exe_subprocess_pyinstaller(
   # ----------------------------------
 
     opts.append(script_path)
-    if python_executable is None:
-        python_executable = sys.executable
     cmd = [python_executable, "-m", "PyInstaller"] + opts
     process = None
     returncode = -1
@@ -129,7 +117,7 @@ def build_exe_subprocess_pyinstaller(
             stderr=subprocess.STDOUT,
             text=False,   # 注意: 不自动解码
             # encoding=locale.getpreferredencoding(False),
-            bufsize=1,
+            bufsize=-1,
             creationflags=flags     # 这里加上
         )
         for line_b in iter(process.stdout.readline, b''):
@@ -187,120 +175,76 @@ def build_exe_subprocess_pyinstaller(
                 print(msg, end="")
     return returncode
 
+
 def build_exe_subprocess_nuitka(
     script_path,
     exe_name="program",
     windowed=False,
-    resource_into_Exe=False,  # 对应 onefile
+    resource_into_Exe=False,
     icon_path=None,
     dist_path=None,
     python_executable=None,
     output_callback=None,
     resource_dir=None,
-):
-    """
-    仿pyinstaller接口，使用nuitka打包。参数定义一致，便于无缝切换。
-    自动检测是否用到tkinter，并自动加--enable-plugin=tk-inter。
-    """
-    flags = 0
-    if sys.platform == "win32":
-        flags = subprocess.CREATE_NO_WINDOW
-    def _script_uses_tkinter(script_path):
-        """静态扫描脚本代码是否用了tkinter"""
-        try:
-            with open(script_path, encoding="utf-8") as f:
-                src = f.read()
-            # 常见写法全部覆盖
-            for pat in [
-                "import tkinter", "from tkinter",    # py3标准
-                "import Tkinter", "from Tkinter",    # py2标准
-                "import ttk", "from ttk",            # ttk扩展
-                "import tkinter.ttk", "from tkinter.ttk",
-                "import ttkbootstrap", "from ttkbootstrap",
-                "import tkmacosx", "from tkmacosx",
-                "import tksheet", "from tksheet",
-                "import tkintertable", "from tkintertable",
-                "import tkcalendar", "from tkcalendar",
-                "import customtkinter", "from customtkinter",
-                "import tkPDFViewer", "from tkPDFViewer",
-                "import tkhtmlview", "from tkhtmlview",
-                "import tkinterDnD2", "from tkinterDnD2",
-                "import tktimepicker", "from tktimepicker",
-                "import tkmultientry", "from tkmultientry",
-                "import tkpredictor", "from tkpredictor",
-                "import easygui", "from easygui",               # easygui内部兜底用tk
-                "import idlelib", "from idlelib",
-                "import PySimpleGUI", "from PySimpleGUI",
-                "import PySimpleGUI.PySimpleGUI", "from PySimpleGUI.PySimpleGUI",
-                "import PySimpleGUI.PySimpleGUITk", "from PySimpleGUI.PySimpleGUITk",
-                "import PySimpleGUI_tk", "from PySimpleGUI_tk",  # 旧版本
-                "import pygubu", "from pygubu",
-                "import tkmaterial", "from tkmaterial",
-                "import ttkthemes", "from ttkthemes",
-                # Pillow的ImageTk在tk下用
-                "from PIL import ImageTk",
-                "import PIL.ImageTk",
-            ]:
-                if pat in src:
-                    return True
-            return False
-        except Exception as e:
-            msg = f"检测tkinter时读取{script_path}失败: {e}"
-            if output_callback:
-                output_callback(msg + "\n")
-            else:
-                print(msg)
-            return False
+    ):
+
+
+    # 1. 确定 Python 路径
+    python_exe = python_executable
+    
+    # 2. 基础参数
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
     opts = [
-        "--follow-imports",
-        "--assume-yes-for-downloads",
-        "--remove-output",
+        "--remove-output",           # 编译完成后自动清理 build 文件夹
     ]
-    # 是否自动加tkinter插件
-    if _script_uses_tkinter(script_path):
-        opts.append("--enable-plugin=tk-inter")
-        if output_callback:
-            output_callback("检测到脚本用到tkinter，自动添加tk-inter插件参数。\n")
-        else:
-            print("检测到脚本用到tkinter，自动添加tk-inter插件参数。")
 
-    # 窗口参数
-    if windowed and os.name == 'nt':
-        opts.append("--windows-disable-console") 
-    # onefile
+    # 3. tkinter / ttkbootstrap 插件
+    tk_usage = _script_uses_tkinter(script_path)
+    if tk_usage in ("tkinter", "ttkbootstrap"):
+        opts.append("--enable-plugin=tk-inter")
+    if tk_usage == "ttkbootstrap":
+        opts.append("--include-package=ttkbootstrap")
+
+    # 4. 模式设置 (Standalone vs Onefile)
     if resource_into_Exe:
         opts.append("--onefile")
     else:
         opts.append("--standalone")
-    # ICON
-    if icon_path and os.name == 'nt':
+
+    # 5. 窗口与图标
+    if windowed and sys.platform == "win32":
+        opts.append("--windows-console-mode=disable")
+    
+    if icon_path and sys.platform == "win32":
+        # 注意：Nuitka 支持直接传入路径
         opts.append(f"--windows-icon-from-ico={icon_path}")
-    # 资源
-    if resource_dir is not None:
-        resource_absdir = os.path.abspath(resource_dir)
-        if os.path.exists(resource_absdir) and os.path.isdir(resource_absdir):
-            resource_basename = os.path.basename(resource_absdir)
-            opts.append(f'--include-data-dir={resource_absdir}={resource_basename}')
-        else:
-            msg = f"资源文件夹不存在: {resource_absdir}\n"
-            if output_callback:
-                output_callback(msg)
-            else:
-                print(msg, end="")
-    # 输出目录
+
+    # 6. 资源文件夹 (Data Files)
+    if resource_dir:
+        res_abs = os.path.abspath(resource_dir)
+        if os.path.exists(res_abs):
+            res_base = os.path.basename(res_abs)
+            # 格式：--include-data-dir=来源=去向
+            opts.append(f"--include-data-dir={res_abs}={res_base}")
+
+    # 7. 输出路径与文件名
     if dist_path:
         opts.append(f"--output-dir={dist_path}")
-    # exe名
-    if exe_name and resource_into_Exe:
-        opts.append(f"--output-filename={exe_name}")
-    opts.append(script_path)
-    # python
-    if python_executable is None:
-        python_executable = sys.executable
-    cmd = [python_executable, "-m", "nuitka"] + opts
-    print("Nuitka命令：", " ".join([str(x) for x in cmd])) 
+    
+    if exe_name:
+        # 修正：Nuitka 指定输出名通常需要加 .exe 后缀（Windows）
+        actual_exe_name = exe_name if exe_name.endswith(".exe") else f"{exe_name}.exe"
+        opts.append(f"--output-filename={actual_exe_name}")
 
+    # 8. 构建最终命令
+    # 建议先尝试 python -m nuitka，这是最兼容的
+    cmd = [python_exe, "-m", "nuitka"] + opts + [script_path]
+    
+    if output_callback:
+        output_callback(f"执行命令: {' '.join(cmd)}\n")
+
+    # 9. 执行过程 (保持你原来的 Popen 逻辑)
     process = None
     returncode = -1
     try:
@@ -309,56 +253,24 @@ def build_exe_subprocess_nuitka(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=False,
-            bufsize=1,
-            creationflags=flags     # 这里加上
+            bufsize=-1,
+            creationflags=flags
         )
+        
         for line_b in iter(process.stdout.readline, b''):
+            # 假设你定义了 safe_decode
             line = safe_decode(line_b)
             if output_callback:
                 output_callback(line)
             else:
                 print(line, end="")
+                
+        process.wait()
+        returncode = process.returncode
     except Exception as e:
-        msg = f"Nuitka打包过程中发生错误: {e}\n"
         if output_callback:
-            output_callback(msg)
-        else:
-            print(msg, end="")
-    finally:
-        if process is not None:
-            try:
-                if process.stdout:
-                    process.stdout.close()
-            except Exception:
-                pass
-            try:
-                process.wait()
-            except Exception:
-                pass
-            returncode = process.returncode
-    # build清理
-    build_dir_candidates = ["build", "__nuitka_build"]
-    for bdir in build_dir_candidates:
-        build_dir = os.path.join(os.getcwd(), bdir)
-        if os.path.exists(build_dir):
-            try:
-                shutil.rmtree(build_dir)
-                msg = f"已删除 build 文件夹：{build_dir}\n"
-                if output_callback:
-                    output_callback(msg)
-                else:
-                    print(msg, end="")
-            except Exception as e:
-                msg = f"删除 build 文件夹失败: {e}\n"
-                if output_callback:
-                    output_callback(msg)
-                else:
-                    print(msg, end="")
-    # nuitka无spec文件，但有 .dist-info，如果要也可清理
-    for entry in os.listdir(os.getcwd()):
-        if entry.endswith('.dist-info') and os.path.isdir(entry):
-            try:
-                shutil.rmtree(os.path.join(os.getcwd(), entry))
-            except Exception:
-                pass
+            output_callback(f"Nuitka 运行异常: {e}\n")
+    
     return returncode
+
+

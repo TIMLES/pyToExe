@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter.scrolledtext import ScrolledText
 import pyToEXE as pyE
 from ttkbootstrap.tooltip import ToolTip  # 放在 import 部分
+from useful_func import get_resource_path,make_timer
 
 dpi_value = 96  # Windows 默认DPI
 if sys.platform == "win32":
@@ -44,8 +45,7 @@ w, h = map(int, win_geometry.split("x"))
 print(f"当前屏幕{w}X{h}")
 vwin_geometry = f"{int(w / 1.5)}x{h // 3}"  # 子弹窗大小
 
-
-tt = findPythonExe.Count_timeCost()
+tt = make_timer()
 # 调用tt()查看与上次插入的时间
 try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -196,7 +196,7 @@ class PackApp:
     def on_py_dropped(self, event):
         paths = self.root.tk.splitlist(event.data)
         if paths and paths[0].endswith(".py"):
-            self.script_path = paths[0]
+            self.script_path = paths[0]   #拖入脚本的路径
 
             self.exe_name = os.path.splitext(os.path.basename(paths[0]))[0]
             pythonLoad = findPythonExe.find_compatible_python(self.script_path)
@@ -242,7 +242,10 @@ class PackApp:
                 messagebox.showerror(
                     "错误", f"以下包在目标解释器未安装:\n{', '.join(missing)}"
                 )
-            else:self.step2()
+            else:
+            # ✅ 成功后写入配置文件最前面
+                findPythonExe.update_python_paths(self.venvPython_exe)
+                self.step2()
 
 
     # 第二步
@@ -558,15 +561,17 @@ class PackApp:
             # 不用win.mainloop()
 
         def add_log_line(line):
-            self.root.after(0, lambda: (
-                self.log_text.insert("end", line.strip() + "\n"),
-                self.log_text.see("end")
-            ))
-
+            text = line.strip()
+            self.root.after(
+                0,
+                lambda t=text: (
+                    self.log_text.insert("end", t + "\n"),
+                    self.log_text.see("end")
+                )
+            )
             
         if self.selected_var.get()=='Pyinstaller':
-            local_package_dir = pyE.get_resource_path(findPythonExe.pyinstaller_choose(self.venvPython_exe))
-            findPythonExe.ensure_pyinstaller_installed(self.venvPython_exe, local_package_dir)
+            findPythonExe.ensure_pyinstaller_installed(self.venvPython_exe)
             build_exe_subprocess=pyE.build_exe_subprocess_pyinstaller;
         else:
             findPythonExe.ensure_nuitka_installed(self.venvPython_exe)

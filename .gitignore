@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Nuitka crash report
+nuitka-crash-report.xml
