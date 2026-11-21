@@ -5,29 +5,42 @@ import shutil
 import ast
 #打包函数
 
-from useful_func import get_resource_path,safe_decode
+from useful_func import get_resource_path, safe_decode, collect_py_sources
+
+# 判定“用到了 tk / tkinter”的模式（含 tk 生态的扩展包）
+_TK_PATTERNS = [
+    "import tkinter", "from tkinter",
+    "import Tkinter", "from Tkinter",
+    "import ttk", "from ttk",
+    "import tkinter.ttk", "from tkinter.ttk",
+    "from PIL import ImageTk", "import PIL.ImageTk",
+]
+# ttkbootstrap 需要额外收集主题数据
+_TTKBOOTSTRAP_PATTERNS = [
+    "import ttkbootstrap", "from ttkbootstrap",
+]
+
+
 def _script_uses_tkinter(script_path):
-    """静态扫描脚本代码是否用了tkinter/ttk/ttkbootstrap等"""
-    try:
-        with open(script_path, encoding="utf-8") as f:
-            src = f.read()
-        for pat in [
-            "import tkinter", "from tkinter",
-            "import Tkinter", "from Tkinter",
-            "import ttk", "from ttk",
-        ]:
-            if pat in src:
-                return "tkinter"
-        for pat in [
-            "import tkinter.ttk", "from tkinter.ttk",
-            "import ttkbootstrap", "from ttkbootstrap",
-        ]:
-            if pat in src:
-                return "ttkbootstrap"
-        
-        return None
-    except Exception:
-        return None
+    """
+    静态扫描入口脚本及其本地包内所有 .py，判断是否用到 tkinter / ttkbootstrap。
+    入口脚本通常只是转发（如 `from mypkg.app import main`），
+    真正的 GUI 代码在本地包里，所以必须递归扫描。
+
+    返回："ttkbootstrap" / "tkinter" / None
+    """
+    found_tk = False
+    for path in collect_py_sources(script_path):
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                src = f.read()
+        except Exception:
+            continue
+        if any(pat in src for pat in _TTKBOOTSTRAP_PATTERNS):
+            return "ttkbootstrap"
+        if not found_tk and any(pat in src for pat in _TK_PATTERNS):
+            found_tk = True
+    return "tkinter" if found_tk else None
 
 def build_exe_subprocess_pyinstaller(
     script_path,

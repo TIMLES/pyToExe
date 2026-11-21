@@ -10,7 +10,7 @@ import json
 
 #python虚拟环境与包判断
 
-from useful_func import get_resource_path
+from useful_func import get_resource_path, collect_py_sources
 
 #是否为有用的python路径
 def is_valid_python_exe(p):
@@ -90,7 +90,8 @@ def find_compatible_python(pyfile):
 #检查目标路径是否包含所有包
 def check_imported_packages_in_target_python(py_filepath, python_exe):
     """
-    检查 py_filepath 所 import 的所有包（非标准库、非本地模块）在目标解释器 python_exe 下是否都已安装
+    检查 py_filepath 及其本地包所 import 的所有包（非标准库、非本地模块）
+    在目标解释器 python_exe 下是否都已安装
     返回未安装的包名集合
     优化：多包一次性检测，极大提升效率
     """
@@ -98,18 +99,22 @@ def check_imported_packages_in_target_python(py_filepath, python_exe):
     if sys.platform == "win32":  #是否为windows平台
         flags = subprocess.CREATE_NO_WINDOW
 
-    def get_imported_packages(py_filepath):
-        """解析.py文件中的import包（返回顶层包名集合）"""
-        with open(py_filepath, "r", encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=py_filepath)
+    def get_imported_packages(py_filepaths):
+        """解析一组 .py 文件中的 import 包（返回顶层包名集合，忽略相对 import）"""
         pkg_names = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    pkg_names.add(alias.name.split(".")[0])
-            elif isinstance(node, ast.ImportFrom):
-                if node.level == 0 and node.module:  # 忽略相对import
-                    pkg_names.add(node.module.split(".")[0])
+        for py_filepath in py_filepaths:
+            try:
+                with open(py_filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    tree = ast.parse(f.read(), filename=py_filepath)
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        pkg_names.add(alias.name.split(".")[0])
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level == 0 and node.module:  # 忽略相对import
+                        pkg_names.add(node.module.split(".")[0])
         return pkg_names
 
     def get_stdlib_modules(python_exe):
@@ -158,6 +163,7 @@ except Exception as e:
         """
         获取与.py文件同目录下的所有.py模块名，和所有子目录（即本地包），
         适配无__init__.py的新风格（PEP 420）。
+        若入口脚本本身就在包里（同目录有 __init__.py），把包名链也算作本地。
         """
         dirname = os.path.dirname(os.path.abspath(py_filepath)) or os.getcwd()
         mod_names = set()
@@ -167,12 +173,21 @@ except Exception as e:
                 mod_names.add(os.path.splitext(fn)[0])
             elif os.path.isdir(full):  # 只要是目录即可视为本地包
                 mod_names.add(fn)
+        # 入口脚本位于包内部时（如 mypkg/app.py），把 mypkg 及其父包名也视为本地
+        cur = dirname
+        while os.path.isfile(os.path.join(cur, "__init__.py")):
+            mod_names.add(os.path.basename(cur))
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
         return mod_names
 
     # --- 主逻辑 ---
     stdlib = get_stdlib_modules(python_exe)
     localmods = get_local_modules(py_filepath)
-    imported = get_imported_packages(py_filepath)
+    # 入口脚本 + 本地包内所有 .py 一起扫，避免入口只是转发时漏检
+    imported = get_imported_packages(collect_py_sources(py_filepath))
     to_check = imported - stdlib - localmods
 
     if not to_check:
